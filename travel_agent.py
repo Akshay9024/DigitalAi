@@ -206,7 +206,8 @@ def search_city_info(city: str) -> Tuple[str, str]:
         def _call():
             llm = ChatOllama(model=os.getenv("OLLAMA_SEARCH_MODEL", "llama3.2"), temperature=0.3)
             resp = llm.invoke(
-                f"Provide a crisp 3-sentence travel summary for {city}. Focus on landmarks, food, vibe, and nearby day trips."
+                f"Provide a crisp 3-sentence travel summary for {city}. Focus on landmarks, food, vibe, and nearby day trips. "
+                f"Do not start your response with 'I couldn't find' or 'I don't have information'. Start directly with the travel summary."
             )
             return resp.content if hasattr(resp, "content") else str(resp)
 
@@ -371,6 +372,7 @@ def _llm_extract_city(text: str, fallback: Optional[str]) -> Optional[str]:
         "2) If no city is mentioned, return the previous city if provided, else return 'UNKNOWN'.\n"
         "3) Ignore time-related words like week, tomorrow, today, next, previous.\n"
         "Respond as JSON: {\"city\": \"<name|UNKNOWN>\"}."
+        " Do not start responses with apologies; only return the JSON."
     )
 
     def _call():
@@ -518,8 +520,14 @@ def city_info_node(state: TravelState) -> Dict[str, Any]:
         return {}
 
     user_text = latest_human.content
+    previous_city = state.get("city")
     # Prefer LLM extraction; fallback to heuristic parser.
-    city = _llm_extract_city(user_text, state.get("city")) or _extract_city(user_text, state.get("city"))
+    candidate_city = _llm_extract_city(user_text, previous_city) or _extract_city(user_text, previous_city)
+    stop_guard = {"about", "week", "weeks", "next", "tomorrow", "today", "now", "month", "months", "year", "years", "day", "days"}
+    if candidate_city and candidate_city.strip().lower() not in stop_guard:
+        city = candidate_city
+    else:
+        city = previous_city
     timeframe = _parse_timeframe(user_text, state.get("timeframe"))
 
     updates: Dict[str, Any] = {
