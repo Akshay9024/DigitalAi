@@ -1,0 +1,9 @@
+langchain 
+langgraph 
+streamlit 
+faiss-cpu 
+chromadb 
+python-dotenv
+requests
+langchain-ollama
+langchain-ollama
