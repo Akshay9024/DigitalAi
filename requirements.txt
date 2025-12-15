@@ -6,4 +6,5 @@ chromadb
 python-dotenv
 requests
 langchain-ollama
+duckduckgo-search
 langchain-ollama
