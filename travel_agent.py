@@ -544,7 +544,10 @@ def city_info_node(state: TravelState) -> Dict[str, Any]:
     vector_hit = CITY_VECTOR_STORE.similarity_search(city)
     if vector_hit:
         doc, score = vector_hit
-        should_search = _llm_router_decide(city, score, user_text)
+        bypass = float(os.getenv("VECTOR_HIGH_CONF", "0.85"))
+        should_search = False
+        if score < bypass:
+            should_search = _llm_router_decide(city, score, user_text)
         if not should_search:
             updates.update(
                 {
