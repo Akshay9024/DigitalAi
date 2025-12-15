@@ -19,6 +19,7 @@ import faiss
 import numpy as np
 import requests
 from dotenv import load_dotenv
+from duckduckgo_search import DDGS
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.graph import END, START, StateGraph
@@ -105,7 +106,7 @@ class CityVectorStore:
         scores, indices = self.index.search(query_vec, 1)
         score = float(scores[0][0])
         idx = int(indices[0][0])
-        if idx < 0 or score < score_threshold:
+        if idx < 0 or (score_threshold is not None and score < score_threshold):
             return None
         return self.docs[idx], score
 
@@ -157,36 +158,22 @@ CITY_VECTOR_STORE = CityVectorStore(seed_city_docs(), embedder=_make_embedder())
 
 
 def _live_search_city(city: str) -> Optional[str]:
-    endpoint = os.getenv("SEARCH_ENDPOINT", "https://ddg-webapp-aagd.vercel.app/search")
-    params = {"q": f"{city} travel guide", "max_results": 3}
-    headers = {"Accept": "application/json"}
-    resp = requests.get(endpoint, params=params, headers=headers, timeout=8)
-    resp.raise_for_status()
-    data = resp.json()
-    snippets = []
-    if isinstance(data, list):
-        for item in data:
-            if isinstance(item, dict):
-                if "body" in item:
-                    snippets.append(item["body"])
-                elif "snippet" in item:
-                    snippets.append(item["snippet"])
-                elif "title" in item:
-                    snippets.append(item["title"])
-    elif isinstance(data, dict):
-        results = data.get("results") or data.get("data") or []
-        for item in results:
+    try:
+        with DDGS() as ddg:
+            results = ddg.text(f"{city} travel guide landmarks food vibe", max_results=5)
+        snippets = []
+        for item in results or []:
             if not isinstance(item, dict):
                 continue
-            if "body" in item:
-                snippets.append(item["body"])
-            elif "snippet" in item:
-                snippets.append(item["snippet"])
-            elif "title" in item:
-                snippets.append(item["title"])
-    if snippets:
-        joined = ". ".join(snippets[:3])
-        return f"{city}: {joined}"
+            for key in ("body", "snippet", "title"):
+                if key in item and isinstance(item[key], str):
+                    snippets.append(item[key])
+                    break
+        if snippets:
+            joined = ". ".join(snippets[:3])
+            return f"{city}: {joined}"
+    except Exception as exc:
+        print(f"[search] live search failed: {exc}")
     return None
 
 
@@ -523,11 +510,15 @@ def city_info_node(state: TravelState) -> Dict[str, Any]:
     previous_city = state.get("city")
     # Prefer LLM extraction; fallback to heuristic parser.
     candidate_city = _llm_extract_city(user_text, previous_city) or _extract_city(user_text, previous_city)
-    stop_guard = {"about", "week", "weeks", "next", "tomorrow", "today", "now", "month", "months", "year", "years", "day", "days"}
-    if candidate_city and candidate_city.strip().lower() not in stop_guard:
-        city = candidate_city
-    else:
-        city = previous_city
+
+    # Validate candidate via vector-store similarity when a previous city exists.
+    city = candidate_city
+    if candidate_city and previous_city and candidate_city != previous_city:
+        best_match = CITY_VECTOR_STORE.similarity_search(candidate_city, threshold=-1.0)
+        low_conf_threshold = float(os.getenv("CITY_GUARD_THRESHOLD", "0.05"))
+        score = best_match[1] if best_match else 0.0
+        if score < low_conf_threshold:
+            city = previous_city
     timeframe = _parse_timeframe(user_text, state.get("timeframe"))
 
     updates: Dict[str, Any] = {
@@ -623,7 +614,7 @@ def planner_node(state: TravelState) -> Dict[str, Any]:
     return {"messages": [ai_msg]}
 
 
-async def weather_node(state: TravelState) -> Dict[str, Any]:
+def weather_node(state: TravelState) -> Dict[str, Any]:
     ai_with_tools = next(
         (m for m in reversed(state.get("messages", [])) if isinstance(m, AIMessage) and m.tool_calls),
         None,
@@ -652,7 +643,7 @@ async def weather_node(state: TravelState) -> Dict[str, Any]:
     return {"messages": tool_msgs, "weather_forecast": forecast}
 
 
-async def image_node(state: TravelState) -> Dict[str, Any]:
+def image_node(state: TravelState) -> Dict[str, Any]:
     ai_with_tools = next(
         (m for m in reversed(state.get("messages", [])) if isinstance(m, AIMessage) and m.tool_calls),
         None,
