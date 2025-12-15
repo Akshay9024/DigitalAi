@@ -1,3 +1,4 @@
+import asyncio
 import uuid
 from typing import Any, Dict, List
 
@@ -59,9 +60,11 @@ def render_response(data: Dict[str, Any]) -> None:
 user_prompt = st.chat_input("Ask about a city (e.g., 'Tell me about Kyoto' or 'What about next week?')")
 if user_prompt:
     with st.spinner("Let me gather details..."):
-        result = GRAPH.invoke(
-            {"messages": [HumanMessage(content=user_prompt)]},
-            config={"configurable": {"thread_id": st.session_state["thread_id"]}},
+        result = asyncio.run(
+            GRAPH.ainvoke(
+                {"messages": [HumanMessage(content=user_prompt)]},
+                config={"configurable": {"thread_id": st.session_state["thread_id"]}},
+            )
         )
     response = result.get("final_response") or {}
     st.session_state["history"].append({"user": user_prompt, "assistant": response})
@@ -71,5 +74,4 @@ for turn in st.session_state["history"]:
     st.chat_message("user").write(turn["user"])
     with st.chat_message("assistant"):
         render_response(turn["assistant"])
-
 

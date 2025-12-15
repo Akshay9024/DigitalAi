@@ -4,6 +4,7 @@ lookup, and mock API integrations. Built to satisfy the AI_Engineer
 requirements and the provided execution plan.
 """
 
+import asyncio
 import hashlib
 import json
 import operator
@@ -209,7 +210,7 @@ def search_city_info(city: str) -> Tuple[str, str]:
     )
 
 
-def get_weather_forecast(city: str, start_offset: int = 0, days: int = 6) -> List[Dict[str, Any]]:
+async def get_weather_forecast(city: str, start_offset: int = 0, days: int = 6) -> List[Dict[str, Any]]:
     """Mock weather API returning structured multi-day data."""
     random.seed(f"{city}-{start_offset}-{days}")
     today = datetime.utcnow() + timedelta(days=start_offset)
@@ -225,7 +226,7 @@ def get_weather_forecast(city: str, start_offset: int = 0, days: int = 6) -> Lis
                 "condition": random.choice(["sunny", "cloudy", "showers", "windy", "clear"]),
             }
         )
-    time.sleep(0.2)  # simulate latency
+    await asyncio.sleep(0.2)  # simulate non-blocking latency
     return forecast
 
 
@@ -511,14 +512,7 @@ def city_info_node(state: TravelState) -> Dict[str, Any]:
     # Prefer LLM extraction; fallback to heuristic parser.
     candidate_city = _llm_extract_city(user_text, previous_city) or _extract_city(user_text, previous_city)
 
-    # Validate candidate via vector-store similarity when a previous city exists.
-    city = candidate_city
-    if candidate_city and previous_city and candidate_city != previous_city:
-        best_match = CITY_VECTOR_STORE.similarity_search(candidate_city, threshold=-1.0)
-        low_conf_threshold = float(os.getenv("CITY_GUARD_THRESHOLD", "0.05"))
-        score = best_match[1] if best_match else 0.0
-        if score < low_conf_threshold:
-            city = previous_city
+    city = candidate_city or previous_city
     timeframe = _parse_timeframe(user_text, state.get("timeframe"))
 
     updates: Dict[str, Any] = {
@@ -614,7 +608,7 @@ def planner_node(state: TravelState) -> Dict[str, Any]:
     return {"messages": [ai_msg]}
 
 
-def weather_node(state: TravelState) -> Dict[str, Any]:
+async def weather_node(state: TravelState) -> Dict[str, Any]:
     ai_with_tools = next(
         (m for m in reversed(state.get("messages", [])) if isinstance(m, AIMessage) and m.tool_calls),
         None,
@@ -628,7 +622,7 @@ def weather_node(state: TravelState) -> Dict[str, Any]:
         if call["name"] != "get_weather_forecast":
             continue
         args = call["args"]
-        forecast = get_weather_forecast(
+        forecast = await get_weather_forecast(
             args.get("city", state.get("city")),
             args.get("start_offset", 0),
             args.get("days", 6),
@@ -643,7 +637,7 @@ def weather_node(state: TravelState) -> Dict[str, Any]:
     return {"messages": tool_msgs, "weather_forecast": forecast}
 
 
-def image_node(state: TravelState) -> Dict[str, Any]:
+async def image_node(state: TravelState) -> Dict[str, Any]:
     ai_with_tools = next(
         (m for m in reversed(state.get("messages", [])) if isinstance(m, AIMessage) and m.tool_calls),
         None,
@@ -657,7 +651,7 @@ def image_node(state: TravelState) -> Dict[str, Any]:
         if call["name"] != "get_city_images":
             continue
         args = call["args"]
-        images = get_city_images(args.get("city", state.get("city")), count=6)
+        images = await asyncio.to_thread(get_city_images, args.get("city", state.get("city")), 6)
         tool_msgs.append(
             ToolMessage(
                 content=json.dumps(images),
