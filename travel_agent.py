@@ -251,6 +251,19 @@ def get_city_images(city: str, count: int = 4) -> List[str]:
         except Exception as e:
             return []
 
+    def _ddg_images() -> List[str]:
+        try:
+            with DDGS() as ddg:
+                results = ddg.images(keywords=city, max_results=count)
+            urls: List[str] = []
+            for item in results or []:
+                if isinstance(item, dict) and isinstance(item.get("image"), str):
+                    urls.append(item["image"])
+            return urls
+        except Exception as exc:
+            print(f"[images] ddg failed: {exc}")
+            return []
+
     curated = {
         "paris": [
             "https://images.unsplash.com/photo-1502602898657-3e91760cbb34",
@@ -268,15 +281,9 @@ def get_city_images(city: str, count: int = 4) -> List[str]:
 
     urls = _unsplash()
     if not urls:
+        urls = _ddg_images()
+    if not urls:
         urls = curated.get(city.lower(), [])[:count]
-
-    if len(urls) < count:
-        filler = [
-            "https://images.unsplash.com/photo-1505764706515-aa95265c5abc",
-            "https://images.unsplash.com/photo-1500530855697-b586d89ba3ee",
-            "https://images.unsplash.com/photo-1491553895911-0055eca6402d",
-        ]
-        urls.extend(filler[: max(0, count - len(urls))])
     return [f"{url}?auto=format&fit=crop&w=1200&q=80" for url in urls]
 
 
@@ -359,6 +366,7 @@ def _llm_extract_city(text: str, fallback: Optional[str]) -> Optional[str]:
         "1) If the user mentions a city, return ONLY the city name (retain multi-word, e.g., 'New York').\n"
         "2) If no city is mentioned, return the previous city if provided, else return 'UNKNOWN'.\n"
         "3) Ignore time-related words like week, tomorrow, today, next, previous.\n"
+        "4) Normalize the city name to its standard English spelling (e.g., 'Visakapattanam' -> 'Visakhapatnam').\n"
         "Respond as JSON: {\"city\": \"<name|UNKNOWN>\"}."
         " Do not start responses with apologies; only return the JSON."
     )
